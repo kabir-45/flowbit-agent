@@ -51,6 +51,21 @@ export interface Memory{
 
 }
 
+// Human correction
+
+export type HumanCorrection = {
+  field: string;
+  from: any;
+  to: any;
+  reason: string;
+};
+
+export type HumanFeedback = {
+  approved: boolean;
+  corrections: HumanCorrection[];
+};
+
+
 // audit
 
 export type AuditStep =

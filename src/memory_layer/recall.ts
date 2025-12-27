@@ -27,7 +27,7 @@ export function recallMemories(vendor: string, auditTrail: AuditEntry[]): Memory
         (now.getTime() - new Date(m.lastUsedAt).getTime()) /
         (1000 * 60 * 60 * 24);
 
-      if (daysUnused > 30) {
+      if (daysUnused > 20) {
         m.confidence = Math.max(0.1, m.confidence * 0.9);
       }
     }

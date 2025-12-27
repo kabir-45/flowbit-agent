@@ -1,5 +1,5 @@
 import db from './db';
-import { Invoice, Result, AuditEntry } from './type';
+import { Invoice, Result, AuditEntry, HumanFeedback } from './type';
 import { recallMemories } from './memory_layer/recall';
 import { applyMemories } from './memory_layer/apply';
 import { decide } from './memory_layer/decide';
@@ -18,13 +18,16 @@ export class MemoryEngine {
     });
   }
 
+  /* ===============================
+     MAIN PIPELINE
+     =============================== */
   public processInvoice(invoice: Invoice): Result {
     this.auditTrail = [];
     this.lastUsedMemoryIds = [];
 
     this.log('recall', `Processing invoice ${invoice.invoiceId} (${invoice.vendor})`);
 
-    // DUPLICATE CHECK (HARD STOP)
+    /* ---------- DUPLICATE CHECK ---------- */
     const duplicate = db.prepare(`
       SELECT 1
       FROM invoice_history
@@ -63,10 +66,10 @@ export class MemoryEngine {
       };
     }
 
-    // RECALL
+    /* ---------- RECALL ---------- */
     const memories = recallMemories(invoice.vendor, this.auditTrail);
 
-    // APPLY
+    /* ---------- APPLY ---------- */
     const { normalized, corrections, usedMemoryIds } =
       applyMemories(invoice, memories, this.auditTrail);
 
@@ -76,7 +79,7 @@ export class MemoryEngine {
       .filter(m => usedMemoryIds.includes(m.id))
       .map(m => m.confidence);
 
-    // DECIDE
+    /* ---------- DECIDE ---------- */
     const decision = decide(
       normalized,
       corrections,
@@ -95,11 +98,11 @@ export class MemoryEngine {
     );
   }
 
-  // PHASE 2: LEARN (FROM HUMAN)
-  public learnFromHuman(
-    invoice: Invoice,
-    approved: boolean
-  ): string[] {
+  /* ===============================
+     LEARN FROM HUMAN
+     =============================== */
+  public learnFromHuman(invoice: Invoice, feedback: HumanFeedback): string[] {
+    const { approved, corrections } = feedback;
 
     // Do NOT learn from duplicates
     if (
@@ -116,7 +119,7 @@ export class MemoryEngine {
     const now = new Date().toISOString();
     const memoryUpdates: string[] = [];
 
-    // BOOTSTRAP 1: FIELD LABEL → FIELD (Supplier GmbH)
+    /* ---------- BOOTSTRAP: FIELD LABEL → FIELD ---------- */
     if (
       invoice.fields.serviceDate === null &&
       /leistungsdatum/i.test(invoice.rawText)
@@ -141,7 +144,7 @@ export class MemoryEngine {
       memoryUpdates.push('Learned field mapping: Leistungsdatum → serviceDate');
     }
 
-    // BOOTSTRAP 2: SKU FROM DESCRIPTION (Freight)
+    /* ---------- BOOTSTRAP: SKU FROM DESCRIPTION ---------- */
     for (const item of invoice.fields.lineItems || []) {
       if (!item.sku && typeof item.description === 'string') {
         if (/(seefracht|shipping)/i.test(item.description)) {
@@ -167,7 +170,7 @@ export class MemoryEngine {
       }
     }
 
-    // BOOTSTRAP 3: CURRENCY FROM RAW TEXT
+    /* ---------- BOOTSTRAP: CURRENCY ---------- */
     if (
       invoice.fields.currency === null &&
       /\b(EUR|USD|GBP)\b/i.test(invoice.rawText)
@@ -193,10 +196,8 @@ export class MemoryEngine {
       memoryUpdates.push(`Learned currency recovery → ${currency}`);
     }
 
-    // BOOTSTRAP 4: VAT INCLUDED (Parts AG)
-    if (
-      /(mwst\.?\s*inkl|prices?\s+incl\.?\s+vat)/i.test(invoice.rawText)
-    ) {
+    /* ---------- BOOTSTRAP: VAT INCLUDED ---------- */
+    if (/(mwst\.?\s*inkl|prices?\s+incl\.?\s+vat)/i.test(invoice.rawText)) {
       db.prepare(`
         INSERT OR IGNORE INTO memories (
           vendor, type, memoryKey, value,
@@ -216,7 +217,7 @@ export class MemoryEngine {
       memoryUpdates.push('Learned VAT-included correction rule');
     }
 
-    // REINFORCEMENT / DECAY (CRITICAL FIX)
+    /* ---------- REINFORCEMENT / DECAY ---------- */
     const learned = learn({
       invoiceId: invoice.invoiceId,
       vendor: invoice.vendor,
@@ -228,7 +229,7 @@ export class MemoryEngine {
 
     memoryUpdates.push(...learned);
 
-    // STORE INVOICE HISTORY
+    /* ---------- STORE HISTORY ---------- */
     db.prepare(`
       INSERT OR REPLACE INTO invoice_history
         (invoiceId, vendor, invoiceNumber, invoiceDate, resolution)
@@ -244,7 +245,9 @@ export class MemoryEngine {
     return memoryUpdates;
   }
 
-  // RESULT BUILDER
+  /* ===============================
+     RESULT BUILDER
+     =============================== */
   private buildResult(
     normalized: any,
     corrections: string[],
