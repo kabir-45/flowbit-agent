@@ -3,7 +3,7 @@ import { MemoryEngine } from './engine';
 import { Invoice } from './type';
 
 
-// 0. Fresh DB (delete memory.sqlite before running video)
+// Fresh DB
 initDB();
 const engine = new MemoryEngine();
 
